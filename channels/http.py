@@ -167,19 +167,20 @@ class AsgiHandler(base.BaseHandler):
     # Size to chunk response bodies into for multiple response messages
     chunk_size = 512 * 1024
 
-    def __init__(self, scope):
-        if scope["type"] != "http":
-            raise ValueError("The AsgiHandler can only handle HTTP connections, not %s" % scope["type"])
+    def __init__(self):
         super(AsgiHandler, self).__init__()
-        self.scope = scope
         self.load_middleware()
 
-    async def __call__(self, receive, send):
+    async def __call__(self, scope, receive, send):
         """
         Async entrypoint - uses the sync_to_async wrapper to run things in a
         threadpool.
         """
-        self.send = async_to_sync(send)
+        if scope["type"] != "http":
+            raise ValueError("The AsgiHandler can only handle HTTP connections, not %s" % scope["type"])
+        
+        sync_send = async_to_sync(send)
+        
         body = b""
         while True:
             message = await receive()
@@ -192,23 +193,23 @@ class AsgiHandler(base.BaseHandler):
                 if "body" in message:
                     body += message["body"]
                 if not message.get("more_body", False):
-                    await self.handle(body)
+                    await self.handle(scope, body, sync_send)
                     return
 
     @sync_to_async
-    def handle(self, body):
+    def handle(self, scope, body, send):
         """
         Synchronous message processing.
         """
         # Set script prefix from message root_path, turning None into empty string
-        script_prefix = self.scope.get("root_path", "") or ""
+        script_prefix = scope.get("root_path", "") or ""
         if settings.FORCE_SCRIPT_NAME:
             script_prefix = settings.FORCE_SCRIPT_NAME
         set_script_prefix(script_prefix)
-        signals.request_started.send(sender=self.__class__, scope=self.scope)
+        signals.request_started.send(sender=self.__class__, scope=scope)
         # Run request through view system
         try:
-            request = self.request_class(self.scope, body)
+            request = self.request_class(scope, body)
         except UnicodeDecodeError:
             logger.warning(
                 "Bad Request (UnicodeDecodeError)",
@@ -231,7 +232,7 @@ class AsgiHandler(base.BaseHandler):
                 response.block_size = 1024 * 512
         # Transform response into messages, which we yield back to caller
         for response_message in self.encode_response(response):
-            self.send(response_message)
+            send(response_message)
         # Close the response now we're done with it
         response.close()
 
