@@ -257,7 +257,7 @@ class AsgiHandler(base.BaseHandler):
         # we need to preserve the Django middleware chain once we load it.
         if (
             not hasattr(self.__class__, "_middleware_chain")
-            or self._class__._middleware_chain is None
+            or self.__class__._middleware_chain is None
         ):
             super(AsgiHandler, self).load_middleware()
             self.__class__._middleware_chain = self._middleware_chain
